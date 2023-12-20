@@ -69,7 +69,7 @@ public abstract class VarArgsFunctionBase extends ExternalFunctionBase {
         ParameterDefinition[] params = sig.getArguments();
         FunctionDefinitionDataType fsig = new FunctionDefinitionDataType("tmpname");
         fsig.setGenericCallingConvention(
-                GenericCallingConvention.getGenericCallingConvention(sig.getCallingConventionName()));
+                GenericCallingConvention.getGenericCallingConvention(sig. getCallingConventionName())); // getCallingConventionName()
         fsig.setArguments(params);
         fsig.setReturnType(sig.getReturnType());
         fsig.setVarArgs(sig.hasVarArgs());

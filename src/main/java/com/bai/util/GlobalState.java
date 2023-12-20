@@ -7,7 +7,9 @@ import com.bai.env.TaintMap;
 import com.bai.env.funcs.FunctionModelManager;
 import com.bai.env.region.Heap;
 import com.bai.env.region.Local;
+import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.script.GhidraScript;
+import ghidra.program.model.block.BasicBlockModel;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Program;
 
@@ -32,6 +34,22 @@ public class GlobalState {
 
     /** e_entry from ELF header **/
     public static Function eEntryFunction;
+
+
+    //添加
+    public static BasicBlockModel basicBlockModel;
+    public static DecompInterface decompInterface;
+
+    public static Boolean doSearchMemcpyLikeFuns;
+
+    public static Toolkit toolkit;
+
+    public static boolean checkloop;
+
+    public static int callDeepLength;
+    public static int callDeep;
+
+    //end
 
     /**
      * @hidden

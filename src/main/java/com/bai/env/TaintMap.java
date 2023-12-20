@@ -64,6 +64,11 @@ public class TaintMap {
     private static final int MAX_TAINT_CNT = 64;
     private static final Map<Source, Integer> taintSourceToIdMap = new HashMap<>();
 
+
+    public static int getTaintID(){
+        return taintId;
+    }
+
     /**
      * Reset the maintained relationship
      */

@@ -41,10 +41,12 @@ public class CWE78 extends CheckerBase {
     }
 
     private static final Map<String, int[]> taintDstSymbols = Map.of(
-            "system", new int[]{0},
-            "popen", new int[]{0},
-            "execl", new int[]{1, 2, 3, 4, 5},
-            "execlp", new int[]{1, 2, 3, 4, 5}
+//            "system", new int[]{0},
+//            "popen", new int[]{0},
+//            "execl", new int[]{1, 2, 3, 4, 5},
+//            "execlp", new int[]{1, 2, 3, 4, 5},
+            "ns_aaa_saml_url_decode",new int[]{1,2,3}
+
     );
 
     private void defineExecSignature(Function function, String name, int argCount) {

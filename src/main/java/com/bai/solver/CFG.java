@@ -5,6 +5,10 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.symbol.FlowType;
+import ghidra.program.model.symbol.Reference;
+import ghidra.util.task.TaskMonitor;
+import org.python.antlr.op.Add;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -26,15 +30,36 @@ public class CFG extends GraphBase<Address> {
 
     private final Map<Address, Integer> wtoMap = new HashMap<>();
     
-    private Set<Integer> isInLoopSet = new HashSet<>();
+    //private Set<Integer> isInLoopSet = new HashSet<>();
 
     private int order;
+    private Set<Integer> isInLoopSet = new HashSet<>();
+
+
+    //add
+    public Set<Integer> callSiteLid = new HashSet<>();
+    public Map<Integer, Set<Address>> id2addr = new HashMap<>();
+    private Map<Address, Integer> rcdLoopId = new HashMap<>();
+    public Set<Address> callsite = new HashSet<>();
+
 
     /**
      * Initialize a CFG of the given function f.
      */
     private CFG(Function f) {
         this.f = f;
+
+        Set<Function> fs = f.getCalledFunctions(TaskMonitor.DUMMY);
+        for(Function callee : fs){
+            Reference[] refs = GlobalState.flatAPI.getReferencesTo(callee.getEntryPoint());
+            for(Reference ref : refs){
+                if(f.getBody().contains(ref.getFromAddress())){
+                    callsite.add(ref.getFromAddress());
+                    break;
+                }
+            }
+        }
+
         Address entry = f.getEntryPoint();
         LinkedList<Address> worklist = new LinkedList<>();
         worklist.add(entry);
@@ -56,6 +81,9 @@ public class CFG extends GraphBase<Address> {
         }
         if (sum > 0) {
             computeWTO();
+        }
+        for(Address addr : callsite){
+            callSiteLid.add(getLoopId(addr));
         }
     }
 
@@ -97,8 +125,19 @@ public class CFG extends GraphBase<Address> {
             if (loop) {
                 isInLoopSet.add(elem);
 
+                //add
+                Address headNode = idToNodeMap.get(id);
+                rcdLoopId.put(headNode,id);
+                if(!id2addr.containsKey(id)) id2addr.put(id, new HashSet<>());
+                id2addr.get(id).add(headNode);
+
                 while (elem != id) {
+                    //overviwer
                     depthFirstNums[elem] = 0;
+                    Address tmp = idToNodeMap.get(elem);
+                    rcdLoopId.put(tmp, id);
+                    if(!id2addr.containsKey(id)) id2addr.put(id, new HashSet<>());
+                    id2addr.get(id).add(tmp);
                     elem = stack.pop();
                     isInLoopSet.add(elem);
                 }
@@ -245,5 +284,13 @@ public class CFG extends GraphBase<Address> {
     public int hashCode() {
         return f.hashCode();
     }
+
+    public int getLoopId(Address address){
+        if(rcdLoopId.containsKey(address)){
+            return rcdLoopId.get(address);
+        }
+        return -1;
+    }
+
 
 }

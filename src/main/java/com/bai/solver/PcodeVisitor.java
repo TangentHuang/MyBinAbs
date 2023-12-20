@@ -1,12 +1,6 @@
 package com.bai.solver;
 
-import com.bai.env.ALoc;
-import com.bai.env.AbsEnv;
-import com.bai.env.AbsVal;
-import com.bai.env.Context;
-import com.bai.env.ContextTransitionTable;
-import com.bai.env.Interval;
-import com.bai.env.KSet;
+import com.bai.env.*;
 import com.bai.env.funcs.FunctionModelManager;
 import com.bai.env.funcs.externalfuncs.ExternalFunctionBase;
 import com.bai.env.funcs.externalfuncs.VarArgsFunctionBase;
@@ -17,11 +11,14 @@ import com.bai.env.funcs.stdfuncs.CppStdModelBase;
 import com.bai.util.GlobalState;
 import com.bai.util.Logging;
 import com.bai.util.Utils;
+import com.microsoft.z3.Log;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.address.AddressRangeImpl;
+import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.pcode.PcodeOp;
 import ghidra.program.model.pcode.Varnode;
@@ -34,6 +31,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import ghidra.program.model.scalar.Scalar;
+import jdk.jshell.execution.Util;
+import org.apache.commons.collections.map.HashedMap;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 import org.javimmutable.collections.JImmutableMap;
@@ -49,6 +50,9 @@ public class PcodeVisitor {
         protected boolean isUpdate;
         protected boolean isExitEmpty;
         protected boolean isFinished;
+
+
+
 
         public Status(boolean noReturn, boolean isUpdate, boolean isExitEmpty, boolean isFinished) {
             this.noReturn = noReturn;
@@ -500,10 +504,28 @@ public class PcodeVisitor {
     public void visit_COPY(PcodeOp pcode, AbsEnv inOutEnv, AbsEnv tmpEnv) {
         Varnode src = pcode.getInput(0);
         Varnode dst = pcode.getOutput();
-
+        Address address=dst.getAddress();
         KSet srcKSet = getKSet(src, inOutEnv, tmpEnv, pcode);
-        setKSet(dst, srcKSet, inOutEnv, tmpEnv, true);
-        updateLocalSize(dst, srcKSet);
+
+        ALoc srcALoc = ALoc.getALoc(src);
+
+        if(srcALoc!=null && !srcKSet.isTop() ){
+            if(srcALoc.getRegion().toString().equals("GLOBAL")){
+                needNaiveTaint(dst,address,inOutEnv,tmpEnv);
+                return;
+            }
+        }else if(src.isConstant() && !srcKSet.isTop() ){
+                needNaiveTaint(dst,address,inOutEnv,tmpEnv);
+                return;
+            }
+        else if(Utils.getAddress(pcode).getOffset()==0x1E14F7C){
+            needNaiveTaint(dst,address,inOutEnv,tmpEnv);
+            return;
+        }
+        else {
+            setKSet(dst, srcKSet, inOutEnv, tmpEnv, true);
+            updateLocalSize(dst, srcKSet);
+        }
     }
 
     public void visit_LOAD(PcodeOp pcode, AbsEnv inOutEnv, AbsEnv tmpEnv) {
@@ -522,19 +544,19 @@ public class PcodeVisitor {
             return;
         }
         // CWE476: Null Pointer Dereference
-        MemoryCorruption.checkNullPointerDereference(srcPtrKSet, address, context, null, MemoryCorruption.TYPE_READ, 0);
+        //MemoryCorruption.checkNullPointerDereference(srcPtrKSet, address, context, null, MemoryCorruption.TYPE_READ, 0);
         for (AbsVal ptr : srcPtrKSet) {
             if (ptr.isBigVal()) {
                 continue;
             }
-            if (ptr.getRegion().isHeap()) {
-                // CWE416: Use After Free
-                MemoryCorruption.checkUseAfterFree(ptr, address, context, null, MemoryCorruption.TYPE_READ);
-            }
-            if (ptr.getRegion().isHeap() || ptr.getRegion().isLocal()) {
-                // CWE125: Out-of-bounds Read
-                MemoryCorruption.checkOutOfBound(ptr, address, context, null, MemoryCorruption.TYPE_READ);
-            }
+//            if (ptr.getRegion().isHeap()) {
+//                // CWE416: Use After Free
+//                MemoryCorruption.checkUseAfterFree(ptr, address, context, null, MemoryCorruption.TYPE_READ);
+//            }
+//            if (ptr.getRegion().isHeap() || ptr.getRegion().isLocal()) {
+//                // CWE125: Out-of-bounds Read
+//                MemoryCorruption.checkOutOfBound(ptr, address, context, null, MemoryCorruption.TYPE_READ);
+//            }
             List<AbsVal> adjustedPtrs = Utils.adjustLocalAbsVal(ptr, context, srcPtrKSet.getBits());
             if (adjustedPtrs.isEmpty()) {
                 // not adjusted
@@ -566,21 +588,20 @@ public class PcodeVisitor {
 
         Address address = Utils.getAddress(pcode);
         // CWE476: Null Pointer Dereference
-        MemoryCorruption.checkNullPointerDereference(dstPtrKSet, address, context, null, MemoryCorruption.TYPE_WRITE,
-                0);
+        //MemoryCorruption.checkNullPointerDereference(dstPtrKSet, address, context, null, MemoryCorruption.TYPE_WRITE, 0);
 
         for (AbsVal ptr : dstPtrKSet) {
             if (ptr.isBigVal()) {
                 continue;
             }
-            if (ptr.getRegion().isHeap()) {
-                // CWE416: Use After Free
-                MemoryCorruption.checkUseAfterFree(ptr, address, context, null, MemoryCorruption.TYPE_WRITE);
-            }
-            if (ptr.getRegion().isHeap() || ptr.getRegion().isLocal()) {
-                // CWE787: Out-of-bounds Write check
-                MemoryCorruption.checkOutOfBound(ptr, address, context, null, MemoryCorruption.TYPE_WRITE);
-            }
+//            if (ptr.getRegion().isHeap()) {
+//                // CWE416: Use After Free
+//                MemoryCorruption.checkUseAfterFree(ptr, address, context, null, MemoryCorruption.TYPE_WRITE);
+//            }
+//            if (ptr.getRegion().isHeap() || ptr.getRegion().isLocal()) {
+//                // CWE787: Out-of-bounds Write check
+//                MemoryCorruption.checkOutOfBound(ptr, address, context, null, MemoryCorruption.TYPE_WRITE);
+//            }
             // Adjust local AbsVal after check.
             List<AbsVal> adjustedPtrs = Utils.adjustLocalAbsVal(ptr, context, dstPtrKSet.getBits());
             if (adjustedPtrs.isEmpty()) {
@@ -675,13 +696,61 @@ public class PcodeVisitor {
         final Address callSite = Utils.getAddress(pcode);
         Function callee = GlobalState.flatAPI.getFunctionAt(targetAddress);
 
+
+
+        //处理SearchMemcpyLike功能时候，不继续分析调用
+        if(GlobalState.doSearchMemcpyLikeFuns){
+            return;
+        }
+
+        // user add bypass function name
+        if(callee.getName().startsWith("__") || callee.getName().contains("mutex")){
+            return;
+        }
+//        if( callee.getName().startsWith("ews")){
+//            Logging.info("analysis function:"+callee.getName());
+//        }else {
+//            Logging.info("NOT analysis function:"+callee.getName());
+//            return;
+//        }
+
+                if( callee.getName().startsWith("ns_")){
+            Logging.info("analysis function:"+callee.getName());
+        }else {
+            Logging.info("NOT analysis function:"+callee.getName());
+            return;
+        }
+
+//
+//        if(callee.getName().startsWith("ns_aaa_client_handler")
+//                ||callee.getName().startsWith("ns_aaa_cookie_valid")
+//                ||callee.getName().startsWith("ns_vpn_process_unauthenticated_request")
+//                ||callee.getName().startsWith("ns_aaa_gwtest_handler")
+//                ||callee.getName().startsWith("ns_aaa_gwtest_get_valid_fsso_server")
+//        ||callee.getName().startsWith("ns_aaa_gwtest_get_event_and_target_names")
+//        ||callee.getName().startsWith("ns_aaa_saml_url_decode")
+//        ||callee.getName().startsWith("ns_aaa_oauth_send_openid_config")){
+//            Logging.info("Call Critix function:"+callee.getName());
+//        }else{
+//            Logging.info("NOT analysis function:"+callee.getName());
+//            return;
+//        }
+
+        if(GlobalState.callDeep>=GlobalState.callDeepLength){
+            return;
+        }else {
+            GlobalState.callDeep+=1;
+            System.out.println(GlobalState.callDeep);
+        }
+
+
         if (callee.isThunk()) {
             callee = callee.getThunkedFunction(true);
         }
 
         if (callee.isExternal() || FunctionModelManager.isFunctionAddressMapped(targetAddress)) {
             defineExternalFunctionSignature(pcode, inOutEnv, tmpEnv, callee);
-            MemoryCorruption.checkExternalCallParameters(pcode, inOutEnv, tmpEnv, context, callee);
+            //MemoryCorruption.checkExternalCallParameters(pcode, inOutEnv, tmpEnv, context, callee);
             Status status = invokeExternal(pcode, inOutEnv, tmpEnv, callee);
             if (status.noReturn) {
                 jumpOut = true;
@@ -692,7 +761,7 @@ public class PcodeVisitor {
         if (FunctionModelManager.isStd(callee)) { // TODO: support mapping address to std model
             Logging.debug("Calling C++ STL: " + callee.getName(true));
             defineStdFunctionSignature(pcode, inOutEnv, tmpEnv, callee);
-            MemoryCorruption.checkExternalCallParameters(pcode, inOutEnv, tmpEnv, context, callee);
+           // MemoryCorruption.checkExternalCallParameters(pcode, inOutEnv, tmpEnv, context, callee);
             Status status = invokeStd(pcode, inOutEnv, tmpEnv, callee);
             if (status.noReturn) {
                 jumpOut = true;
@@ -799,7 +868,7 @@ public class PcodeVisitor {
             if (callee.isExternal() || FunctionModelManager.isFunctionAddressMapped(targetAddress)) {
                 defineExternalFunctionSignature(pcode, inOutEnv, tmpEnv, callee);
                 // CWE119, CWE416, CWE416, CWE476
-                MemoryCorruption.checkExternalCallParameters(pcode, inOutEnv, tmpEnv, context, callee);
+                //MemoryCorruption.checkExternalCallParameters(pcode, inOutEnv, tmpEnv, context, callee);
                 status = invokeExternal(pcode, inOutEnv, tmpEnv, callee);
                 if (status == null) {
                     continue;
@@ -810,7 +879,7 @@ public class PcodeVisitor {
             } else if (FunctionModelManager.isStd(callee)) { // TODO: support mapping address to std model
                 defineStdFunctionSignature(pcode, inOutEnv, tmpEnv, callee);
                 // CWE119, CWE416, CWE416, CWE476
-                MemoryCorruption.checkExternalCallParameters(pcode, inOutEnv, tmpEnv, context, callee);
+                //MemoryCorruption.checkExternalCallParameters(pcode, inOutEnv, tmpEnv, context, callee);
                 status = invokeStd(pcode, inOutEnv, tmpEnv, callee);
                 if (status == null) {
                     continue;
@@ -883,6 +952,12 @@ public class PcodeVisitor {
     }
 
     public void visit_RETURN(PcodeOp pcode, AbsEnv inOutEnv, AbsEnv tmpEnv) {
+
+        if(GlobalState.callDeep>0){
+            GlobalState.callDeep-=1;
+            System.out.println(GlobalState.callDeep);
+        }
+
         Function function = context.getFunction();
         if (function.hasNoReturn()) {
             return;
@@ -947,6 +1022,10 @@ public class PcodeVisitor {
         KSet op2KSet = getKSet(op2, inOutEnv, tmpEnv, pcode);
         KSet resKSet = op1KSet.int_equal(op2KSet);
         setKSet(dst, resKSet, inOutEnv, tmpEnv, true);
+
+        if(GlobalState.checkloop)
+            checkTaintedloop(pcode,op1KSet,op2KSet);
+
     }
 
     public void visit_INT_NOTEQUAL(PcodeOp pcode, AbsEnv inOutEnv, AbsEnv tmpEnv) {
@@ -958,6 +1037,9 @@ public class PcodeVisitor {
         KSet op2KSet = getKSet(op2, inOutEnv, tmpEnv, pcode);
         KSet resKSet = (op1KSet.int_equal(op2KSet)).bool_not();
         setKSet(dst, resKSet, inOutEnv, tmpEnv, true);
+        if(GlobalState.checkloop)
+            checkTaintedloop(pcode,op1KSet,op2KSet);
+
     }
 
     public void visit_INT_LESS(PcodeOp pcode, AbsEnv inOutEnv, AbsEnv tmpEnv) {
@@ -969,6 +1051,9 @@ public class PcodeVisitor {
         KSet op2KSet = getKSet(op2, inOutEnv, tmpEnv, pcode);
         KSet resKSet = op1KSet.int_less(op2KSet);
         setKSet(dst, resKSet, inOutEnv, tmpEnv, true);
+        if(GlobalState.checkloop)
+            checkTaintedloop(pcode,op1KSet,op2KSet);
+
     }
 
     public void visit_INT_SLESS(PcodeOp pcode, AbsEnv inOutEnv, AbsEnv tmpEnv) {
@@ -980,6 +1065,9 @@ public class PcodeVisitor {
         KSet op2KSet = getKSet(op2, inOutEnv, tmpEnv, pcode);
         KSet resKSet = op1KSet.int_sless(op2KSet);
         setKSet(dst, resKSet, inOutEnv, tmpEnv, true);
+        if(GlobalState.checkloop)
+            checkTaintedloop(pcode,op1KSet,op2KSet);
+
     }
 
     public void visit_INT_LESSEQUAL(PcodeOp pcode, AbsEnv inOutEnv, AbsEnv tmpEnv) {
@@ -991,6 +1079,8 @@ public class PcodeVisitor {
         KSet op2KSet = getKSet(op2, inOutEnv, tmpEnv, pcode);
         KSet resKSet = op2KSet.int_less(op1KSet).bool_not();
         setKSet(dst, resKSet, inOutEnv, tmpEnv, true);
+        if(GlobalState.checkloop)
+            checkTaintedloop(pcode,op1KSet,op2KSet);
     }
 
     public void visit_INT_SLESSEQUAL(PcodeOp pcode, AbsEnv inOutEnv, AbsEnv tmpEnv) {
@@ -1002,6 +1092,8 @@ public class PcodeVisitor {
         KSet op2KSet = getKSet(op2, inOutEnv, tmpEnv, pcode);
         KSet resKSet = op2KSet.int_sless(op1KSet).bool_not();
         setKSet(dst, resKSet, inOutEnv, tmpEnv, true);
+        if(GlobalState.checkloop)
+            checkTaintedloop(pcode,op1KSet,op2KSet);
     }
 
     public void visit_INT_ZEXT(PcodeOp pcode, AbsEnv inOutEnv, AbsEnv tmpEnv) {
@@ -1034,7 +1126,7 @@ public class PcodeVisitor {
         setKSet(dst, resKSet, inOutEnv, tmpEnv, true);
         updateLocalSize(dst, resKSet);
         // CWE190: Integer Overflow
-        IntegerOverflowUnderflow.checkTaint(op1KSet, op2KSet, pcode, true);
+        //IntegerOverflowUnderflow.checkTaint(op1KSet, op2KSet, pcode, true);
     }
 
     public void visit_INT_SUB(PcodeOp pcode, AbsEnv inOutEnv, AbsEnv tmpEnv) {
@@ -1149,7 +1241,7 @@ public class PcodeVisitor {
         setKSet(dst, resKSet, inOutEnv, tmpEnv, true);
         updateLocalSize(dst, resKSet);
         // CWE190: Integer Overflow
-        IntegerOverflowUnderflow.checkTaint(op1KSet, op2KSet, pcode, true);
+        //IntegerOverflowUnderflow.checkTaint(op1KSet, op2KSet, pcode, true);
     }
 
     public void visit_INT_RIGHT(PcodeOp pcode, AbsEnv inOutEnv, AbsEnv tmpEnv) {
@@ -1187,7 +1279,7 @@ public class PcodeVisitor {
         setKSet(dst, resKSet, inOutEnv, tmpEnv, true);
         updateLocalSize(dst, resKSet);
         // CWE190: Integer Overflow
-        IntegerOverflowUnderflow.checkTaint(op1KSet, op2KSet, pcode, true);
+        //IntegerOverflowUnderflow.checkTaint(op1KSet, op2KSet, pcode, true);
     }
 
     public void visit_INT_DIV(PcodeOp pcode, AbsEnv inOutEnv, AbsEnv tmpEnv) {
@@ -1316,7 +1408,25 @@ public class PcodeVisitor {
         updateLocalSize(dst, resKSet);
     }
 
+    public boolean needNaiveTaint(Varnode dst, Address address, AbsEnv inOutEnv, AbsEnv tmpEnv) {
+        Function f = GlobalState.flatAPI.getFunctionContaining(address);
+        long newTaints = TaintMap.getTaints(address, context, GlobalState.flatAPI.getFunctionContaining(address));
+        Logging.info("Add taint at: " + address + " " + newTaints + " Taint NUM# " + TaintMap.getTaintID());
+        setKSet(dst, KSet.getTop(newTaints), inOutEnv, tmpEnv, true);
+        return true;
+    }
     public void visit(PcodeOp pcode, AbsEnv inOutEnv, AbsEnv tmpEnv) {
+        Address address = Utils.getAddress(pcode);
+        if(address==null) return;
+
+//        else if(address.getOffset()==0xC7FA40){
+//            Program f=GlobalState.currentProgram;
+//            Register register=f.getRegister("RDI");
+//            Varnode varnode=new Varnode(address,register.getMinimumByteSize());
+//            needNaiveTaint(varnode,address,inOutEnv,tmpEnv);
+//        }
+        //else Logging.info("dealing address inst: "+address);
+        // Logging.info("dealing address inst: "+address);
         switch (pcode.getOpcode()) {
             case PcodeOp.COPY:
                 visit_COPY(pcode, inOutEnv, tmpEnv);
@@ -1488,4 +1598,60 @@ public class PcodeVisitor {
         jumpOut = false;
         return false;
     }
+
+    //add
+    public static Set<Address> reported_loop_addr = new HashSet<>();
+    public static Map<Function, Map> f2loopid = new HashMap<>();
+
+    public void checkTaintedloop(PcodeOp pcode, KSet op1KSet, KSet op2KSet) {
+        Address addr =  Utils.getAddress(pcode);
+        Instruction ins = GlobalState.flatAPI.getInstructionAt(addr);
+
+        //ARM
+        if(GlobalState.arch.toString().startsWith("ARM") &&!ins.getMnemonicString().startsWith("cmp") && !ins.getMnemonicString().startsWith("beq")) return;
+        //x86-64
+
+        if(!op1KSet.isTaint() && !op2KSet.isTaint()) return;
+        CFG cfg =  CFG.getCFG(context.getFunction());
+        int lid = cfg.getLoopId(addr);
+        if(lid!=-1 && !reported_loop_addr.contains(addr)) {
+            Function f = GlobalState.flatAPI.getFunctionContaining(addr);
+            if(f==null) return;
+            Address[] da = ins.getNext().getDefaultFlows();
+            Address next = ins.getNext().getFallThrough();
+            if(da.length > 0 && (cfg.getLoopId(da[0]) != cfg.getLoopId(addr) || cfg.getLoopId(next) != cfg.getLoopId(addr))){
+                boolean report = false;
+                if(op1KSet.isTaint() && op2KSet.isTaint()) report = true;
+                if(report && cfg.callSiteLid.contains(lid)) report = false;
+                if(ins.getInputObjects().length > 1){
+                    Object[] objs = ins.getInputObjects();
+                    if(objs[objs.length-1] instanceof Scalar && ((Scalar)objs[objs.length-1]).getValue()!=0) report = false;
+                    else report = true;
+                }
+                if(report && cfg.id2addr.containsKey(lid)){
+                    boolean exist_store = false;
+                    Set<Address> ins_addrs = cfg.id2addr.get(lid);
+                    for(Address ins_addr : ins_addrs){
+                        Instruction inst = GlobalState.flatAPI.getInstructionAt(ins_addr);
+                        if(inst.getMnemonicString().contains("str")){
+                            exist_store = true;
+                            break;
+                        }
+                    }
+                    report = exist_store;
+                }
+
+                if(report) {
+                    if(!f2loopid.containsKey(f)){
+                        Map<Integer, Address> id2addr = new HashedMap();
+                        f2loopid.put(f, id2addr);
+                    }
+                    reported_loop_addr.add(addr);
+                    f2loopid.get(f).put(lid, addr);
+                }
+//                    Logging.info("Potential parsing IE via loop at " + context.getFunction().getEntryPoint() + " 0x" + addr);
+            }
+        }
+    }
+
 }

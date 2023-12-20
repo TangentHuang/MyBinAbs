@@ -16,7 +16,8 @@ public class CheckerManager {
             Map.entry("CWE426", new CWE426()),
             Map.entry("CWE467", new CWE467()),
             Map.entry("CWE676", new CWE676()),
-            Map.entry("CWE78", new CWE78())
+            Map.entry("CWE78", new CWE78()),
+            Map.entry("HSL_checker",new HSL_chekcer())
     );
 
     /**
